@@ -3,6 +3,7 @@ package injector
 import (
 	"context"
 	"fmt"
+	"testing"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -10,6 +11,7 @@ import (
 	mapset "github.com/deckarep/golang-set"
 	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
+	tassert "github.com/stretchr/testify/assert"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -56,8 +58,12 @@ var _ = Describe("Test all patch operations", func() {
 			pod := tests.NewPodFixture(namespace, podName, tests.BookstoreServiceAccountName, nil)
 			pod.Annotations = nil
 			mockConfigurator.EXPECT().GetEnvoyLogLevel().Return("").Times(1)
+			mockConfigurator.EXPECT().GetEnvoyImage().Return("").Times(1)
+			mockConfigurator.EXPECT().GetInitContainerImage().Return("").Times(1)
 			mockConfigurator.EXPECT().IsPrivilegedInitContainer().Return(false).Times(1)
 			mockConfigurator.EXPECT().GetOutboundIPRangeExclusionList().Return(nil).Times(1)
+			mockConfigurator.EXPECT().GetOutboundPortExclusionList().Return(nil).Times(1)
+			mockConfigurator.EXPECT().GetProxyResources().Return(corev1.ResourceRequirements{}).Times(1)
 
 			req := &admissionv1.AdmissionRequest{Namespace: namespace}
 			jsonPatches, err := wh.createPatch(&pod, req, proxyUUID)
@@ -103,3 +109,52 @@ var _ = Describe("Test all patch operations", func() {
 		})
 	})
 })
+
+func TestMergePortExclusionLists(t *testing.T) {
+	assert := tassert.New(t)
+
+	testCases := []struct {
+		name                              string
+		podOutboundPortExclusionList      []int
+		globalOutboundPortExclusionList   []int
+		expectedOutboundPortExclusionList []int
+	}{
+		{
+			name:                              "overlap in global and pod outbound exclusion list",
+			podOutboundPortExclusionList:      []int{6060, 7070},
+			globalOutboundPortExclusionList:   []int{6060, 8080},
+			expectedOutboundPortExclusionList: []int{6060, 7070, 8080},
+		},
+		{
+			name:                              "no overlap in global and pod outbound exclusion list",
+			podOutboundPortExclusionList:      []int{6060, 7070},
+			globalOutboundPortExclusionList:   []int{8080},
+			expectedOutboundPortExclusionList: []int{6060, 7070, 8080},
+		},
+		{
+			name:                              "pod outbound exclusion list is nil",
+			podOutboundPortExclusionList:      nil,
+			globalOutboundPortExclusionList:   []int{8080},
+			expectedOutboundPortExclusionList: []int{8080},
+		},
+		{
+			name:                              "global outbound exclusion list is nil",
+			podOutboundPortExclusionList:      []int{6060, 7070},
+			globalOutboundPortExclusionList:   nil,
+			expectedOutboundPortExclusionList: []int{6060, 7070},
+		},
+		{
+			name:                              "no global or pod level outbound exclusion list",
+			podOutboundPortExclusionList:      nil,
+			globalOutboundPortExclusionList:   nil,
+			expectedOutboundPortExclusionList: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := mergePortExclusionLists(tc.podOutboundPortExclusionList, tc.globalOutboundPortExclusionList)
+			assert.ElementsMatch(tc.expectedOutboundPortExclusionList, actual)
+		})
+	}
+}

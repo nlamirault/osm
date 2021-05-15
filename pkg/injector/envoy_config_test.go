@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -245,7 +246,17 @@ var _ = Describe("Test functions creating Envoy bootstrap configuration", func()
 	Context("test getEnvoySidecarContainerSpec()", func() {
 		It("creates Envoy sidecar spec", func() {
 			mockConfigurator.EXPECT().GetEnvoyLogLevel().Return("debug").Times(1)
-			actual := getEnvoySidecarContainerSpec(pod, envoyImage, mockConfigurator, originalHealthProbes)
+			mockConfigurator.EXPECT().GetEnvoyImage().Return(envoyImage).Times(1)
+			mockConfigurator.EXPECT().GetProxyResources().Return(corev1.ResourceRequirements{
+				// Test set Limits
+				Limits: map[corev1.ResourceName]resource.Quantity{
+					"cpu":    resource.MustParse("2"),
+					"memory": resource.MustParse("512M"),
+				},
+				// Test unset Requests
+				Requests: nil,
+			}).Times(1)
+			actual := getEnvoySidecarContainerSpec(pod, mockConfigurator, originalHealthProbes)
 
 			expected := corev1.Container{
 				Name:            constants.EnvoyContainerName,
@@ -264,6 +275,15 @@ var _ = Describe("Test functions creating Envoy bootstrap configuration", func()
 						ReadOnly:  true,
 						MountPath: envoyProxyConfigPath,
 					},
+				},
+				Resources: corev1.ResourceRequirements{
+					// Test set Limits
+					Limits: map[corev1.ResourceName]resource.Quantity{
+						"cpu":    resource.MustParse("2"),
+						"memory": resource.MustParse("512M"),
+					},
+					// Test unset Requests
+					Requests: nil,
 				},
 				Command: []string{
 					"envoy",

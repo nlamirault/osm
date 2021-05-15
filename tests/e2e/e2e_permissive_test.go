@@ -14,7 +14,7 @@ import (
 var _ = OSMDescribe("Permissive Traffic Policy Mode",
 	OSMDescribeInfo{
 		Tier:   1,
-		Bucket: 1,
+		Bucket: 7,
 	},
 	func() {
 		Context("Permissive mode HTTP test with a Kubernetes Service for the Source", func() {
@@ -41,6 +41,7 @@ func testPermissiveMode(withSourceKubernetesService bool) {
 		installOpts := Td.GetOSMInstallOpts()
 		installOpts.EnablePermissiveMode = true
 		Expect(Td.InstallOSM(installOpts)).To(Succeed())
+		meshConfig, _ := Td.GetMeshConfig(Td.OsmNamespace)
 
 		// Create Test NS
 		for _, n := range ns {
@@ -112,7 +113,9 @@ func testPermissiveMode(withSourceKubernetesService bool) {
 
 		By("Ensuring traffic is not allowed when permissive mode is disabled")
 
-		Expect(Td.UpdateOSMConfig("permissive_traffic_policy_mode", "false"))
+		meshConfig.Spec.Traffic.EnablePermissiveTrafficPolicyMode = false
+		_, err = Td.UpdateOSMConfig(meshConfig)
+		Expect(err).NotTo(HaveOccurred())
 
 		cond = Td.WaitForRepeatedSuccess(func() bool {
 			result := Td.HTTPRequest(req)

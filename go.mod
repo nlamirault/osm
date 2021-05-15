@@ -26,6 +26,7 @@ require (
 	github.com/jstemmer/go-junit-report v0.9.1
 	github.com/matm/gocov-html v0.0.0-20200509184451-71874e2e203b
 	github.com/mitchellh/gox v1.0.1
+	github.com/mitchellh/hashstructure/v2 v2.0.1
 	github.com/norwoodj/helm-docs v1.4.0
 	github.com/olekukonko/tablewriter v0.0.2
 	github.com/onsi/ginkgo v1.16.1
@@ -50,6 +51,7 @@ require (
 	helm.sh/helm/v3 v3.5.3
 	honnef.co/go/tools v0.1.1 // indirect
 	k8s.io/api v0.20.5
+	k8s.io/apiextensions-apiserver v0.20.2
 	k8s.io/apimachinery v0.20.5
 	k8s.io/cli-runtime v0.20.5
 	k8s.io/client-go v0.20.5

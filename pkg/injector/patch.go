@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	mapset "github.com/deckarep/golang-set"
 	"github.com/google/uuid"
 	"gomodules.xyz/jsonpatch/v2"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -53,12 +54,17 @@ func (wh *mutatingWebhook) createPatch(pod *corev1.Pod, req *admissionv1.Admissi
 	// Create volume for envoy TLS secret
 	pod.Spec.Volumes = append(pod.Spec.Volumes, getVolumeSpec(envoyBootstrapConfigName)...)
 
+	podOutboundPortExclusionList, _ := wh.getPodOutboundPortExclusionList(pod, namespace)
+	globalOutboundPortExclusionList := wh.configurator.GetOutboundPortExclusionList()
+
+	outboundPortExclusionList := mergePortExclusionLists(podOutboundPortExclusionList, globalOutboundPortExclusionList)
+
 	// Add the Init Container
-	initContainer := getInitContainerSpec(constants.InitContainerName, wh.config.InitContainerImage, wh.configurator.GetOutboundIPRangeExclusionList(), wh.configurator.IsPrivilegedInitContainer())
+	initContainer := getInitContainerSpec(constants.InitContainerName, wh.configurator, wh.configurator.GetOutboundIPRangeExclusionList(), outboundPortExclusionList, wh.configurator.IsPrivilegedInitContainer())
 	pod.Spec.InitContainers = append(pod.Spec.InitContainers, initContainer)
 
 	// Add the Envoy sidecar
-	sidecar := getEnvoySidecarContainerSpec(pod, wh.config.SidecarImage, wh.configurator, originalHealthProbes)
+	sidecar := getEnvoySidecarContainerSpec(pod, wh.configurator, originalHealthProbes)
 	pod.Spec.Containers = append(pod.Spec.Containers, sidecar)
 
 	enableMetrics, err := wh.isMetricsEnabled(namespace)
@@ -94,4 +100,27 @@ func makePatches(req *admissionv1.AdmissionRequest, pod *corev1.Pod) []jsonpatch
 	}
 	admissionResponse := admission.PatchResponseFromRaw(original, current)
 	return admissionResponse.Patches
+}
+
+func mergePortExclusionLists(podOutboundPortExclusionList, globalOutboundPortExclusionList []int) []int {
+	portExclusionListMap := mapset.NewSet()
+	var portExclusionListMerged []int
+
+	// iterate over the global outbound ports to be excluded
+	for _, port := range globalOutboundPortExclusionList {
+		addedToSet := portExclusionListMap.Add(port)
+		if addedToSet {
+			portExclusionListMerged = append(portExclusionListMerged, port)
+		}
+	}
+
+	// iterate over the pod level outbound ports to be excluded
+	for _, port := range podOutboundPortExclusionList {
+		addedToSet := portExclusionListMap.Add(port)
+		if addedToSet {
+			portExclusionListMerged = append(portExclusionListMerged, port)
+		}
+	}
+
+	return portExclusionListMerged
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/openservicemesh/osm/pkg/certificate/providers"
 	"github.com/openservicemesh/osm/pkg/configurator"
 	"github.com/openservicemesh/osm/pkg/constants"
+	configClientset "github.com/openservicemesh/osm/pkg/gen/client/config/clientset/versioned"
 	"github.com/openservicemesh/osm/pkg/httpserver"
 	"github.com/openservicemesh/osm/pkg/injector"
 	k8s "github.com/openservicemesh/osm/pkg/kubernetes"
@@ -40,7 +41,7 @@ var (
 	osmNamespace       string
 	webhookConfigName  string
 	caBundleSecretName string
-	osmConfigMapName   string
+	osmMeshConfigName  string
 
 	injectorConfig injector.Config
 
@@ -64,12 +65,10 @@ func init() {
 	flags.StringVar(&kubeConfigFile, "kubeconfig", "", "Path to Kubernetes config file.")
 	flags.StringVar(&osmNamespace, "osm-namespace", "", "Namespace to which OSM belongs to.")
 	flags.StringVar(&webhookConfigName, "webhook-config-name", "", "Name of the MutatingWebhookConfiguration to be configured by osm-injector")
-	flags.StringVar(&osmConfigMapName, "osm-configmap-name", "osm-config", "Name of the OSM ConfigMap")
+	flags.StringVar(&osmMeshConfigName, "osm-config-name", "osm-mesh-config", "Name of the OSM MeshConfig")
 
 	// sidecar injector options
 	flags.IntVar(&injectorConfig.ListenPort, "webhook-port", constants.InjectorWebhookPort, "Webhook port for sidecar-injector")
-	flags.StringVar(&injectorConfig.InitContainerImage, "init-container-image", "", "InitContainer image")
-	flags.StringVar(&injectorConfig.SidecarImage, "sidecar-image", "", "Sidecar proxy Container image")
 
 	// Generic certificate manager/provider options
 	flags.StringVar(&certProviderKind, "certificate-manager", providers.TresorKind.String(), fmt.Sprintf("Certificate manager, one of [%v]", providers.ValidCertificateProviders))
@@ -134,13 +133,13 @@ func main() {
 		metricsstore.DefaultMetricsStore.CertIssuedTime,
 	)
 
-	// Initialize Configurator to watch osm-config ConfigMap
-	cfg := configurator.NewConfigurator(kubeClient, stop, osmNamespace, osmConfigMapName)
-	configMap, err := cfg.GetConfigMap()
+	// Initialize Configurator to retrieve mesh specific config
+	cfg := configurator.NewConfigurator(configClientset.NewForConfigOrDie(kubeConfig), stop, osmNamespace, osmMeshConfigName)
+	meshConfig, err := cfg.GetMeshConfigJSON()
 	if err != nil {
-		log.Error().Err(err).Msgf("Error parsing ConfigMap %s", osmConfigMapName)
+		log.Error().Err(err).Msgf("Error parsing MeshConfig %s", osmMeshConfigName)
 	}
-	log.Debug().Msgf("Initial ConfigMap %s: %s", osmConfigMapName, string(configMap))
+	log.Info().Msgf("Initial MeshConfig %s: %v", osmMeshConfigName, meshConfig)
 
 	// Initialize kubernetes.Controller to watch kubernetes resources
 	kubeController, err := k8s.NewKubernetesController(kubeClient, meshName, stop, k8s.Namespaces)
@@ -219,14 +218,6 @@ func validateCLIParams() error {
 
 	if osmNamespace == "" {
 		return errors.New("Please specify the OSM namespace using --osm-namespace")
-	}
-
-	if injectorConfig.InitContainerImage == "" {
-		return errors.New("Please specify the init container image using --init-container-image")
-	}
-
-	if injectorConfig.SidecarImage == "" {
-		return errors.Errorf("Please specify the sidecar image using --sidecar-image")
 	}
 
 	if webhookConfigName == "" {

@@ -8,13 +8,14 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
+	"github.com/openservicemesh/osm/pkg/constants"
 	. "github.com/openservicemesh/osm/tests/framework"
 )
 
 var _ = OSMDescribe("Test TCP traffic from 1 pod client -> egress server",
 	OSMDescribeInfo{
 		Tier:   1,
-		Bucket: 3,
+		Bucket: 9,
 	},
 	func() {
 		Context("SimpleClientServer egress TCP", func() {
@@ -31,6 +32,8 @@ func testTCPEgressTraffic() {
 		installOpts := Td.GetOSMInstallOpts()
 		installOpts.EgressEnabled = true
 		Expect(Td.InstallOSM(installOpts)).To(Succeed())
+
+		meshConfig, _ := Td.GetMeshConfig(Td.OsmNamespace)
 
 		// Load TCP server image
 		Expect(Td.LoadImagesToKind([]string{"tcp-echo-server"})).To(Succeed())
@@ -53,7 +56,7 @@ func testTCPEgressTraffic() {
 				Command:     []string{"/tcp-echo-server"},
 				Args:        []string{"--port", fmt.Sprintf("%d", destinationPort)},
 				Ports:       []int{destinationPort},
-				AppProtocol: AppProtocolTCP,
+				AppProtocol: constants.ProtocolTCP,
 			})
 
 		_, err := Td.CreateServiceAccount(destName, &svcAccDef)
@@ -105,7 +108,9 @@ func testTCPEgressTraffic() {
 		Expect(cond).To(BeTrue(), "Failed testing TCP traffic from %s", srcToDestStr)
 
 		By("Disabling egress")
-		Expect(Td.UpdateOSMConfig("egress", "false")).To(Succeed())
+		meshConfig.Spec.Traffic.EnableEgress = false
+		_, err = Td.UpdateOSMConfig(meshConfig)
+		Expect(err).NotTo(HaveOccurred())
 
 		// Expect client not to reach server
 		cond = Td.WaitForRepeatedSuccess(func() bool {

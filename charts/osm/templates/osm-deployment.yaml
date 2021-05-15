@@ -26,9 +26,20 @@ spec:
         prometheus.io/port: '9091'
     spec:
       serviceAccountName: {{ .Release.Name }}
+      {{- if and (not (.Capabilities.APIVersions.Has "security.openshift.io/v1")) .Values.OpenServiceMesh.pspEnabled }}
+      {{- include "restricted.securityContext" . | nindent 6 }}
+      {{- end }}
       nodeSelector:
         kubernetes.io/arch: amd64
         kubernetes.io/os: linux
+      initContainers:
+        - name: init-osm-controller
+          image: "{{ .Values.OpenServiceMesh.image.registry }}/init-osm-controller:{{ .Values.OpenServiceMesh.image.tag }}"
+          imagePullPolicy: {{ .Values.OpenServiceMesh.image.pullPolicy }}
+          command: ['/init-osm-controller']
+          args: [
+            "--osm-namespace", "{{ include "osm.namespace" . }}"
+          ]
       containers:
         - name: osm-controller
           image: "{{ .Values.OpenServiceMesh.image.registry }}/osm-controller:{{ .Values.OpenServiceMesh.image.tag }}"
@@ -56,8 +67,11 @@ spec:
             "--cert-manager-issuer-name", "{{.Values.OpenServiceMesh.certmanager.issuerName}}",
             "--cert-manager-issuer-kind", "{{.Values.OpenServiceMesh.certmanager.issuerKind}}",
             "--cert-manager-issuer-group", "{{.Values.OpenServiceMesh.certmanager.issuerGroup}}",
-            {{- if .Values.OpenServiceMesh.enableWASMStatsExperimental }}
+            {{- if .Values.OpenServiceMesh.featureFlags.enableWASMStats }}
             "--stats-wasm-experimental",
+            {{- end }}
+            {{- if .Values.OpenServiceMesh.featureFlags.enableEgressPolicy }}
+            "--enable-egress-policy",
             {{- end }}
           ]
           resources:
@@ -137,7 +151,7 @@ spec:
       - name: var-lib-containers
         hostPath:
           path: /var/lib/docker/containers
-     {{- end }}
+    {{- end }}
     {{- if .Values.OpenServiceMesh.imagePullSecrets }}
       imagePullSecrets:
 {{ toYaml .Values.OpenServiceMesh.imagePullSecrets | indent 8 }}

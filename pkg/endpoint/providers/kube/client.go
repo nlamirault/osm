@@ -215,8 +215,8 @@ func (c *Client) GetResolvableEndpointsForService(svc service.MeshService) ([]en
 		return nil, errServiceNotFound
 	}
 
-	if len(kubeService.Spec.ClusterIP) == 0 {
-		// If service has no cluster IP, use final endpoint as resolvable destinations
+	if len(kubeService.Spec.ClusterIP) == 0 || kubeService.Spec.ClusterIP == corev1.ClusterIPNone {
+		// If service has no cluster IP or cluster IP is <none>, use final endpoint as resolvable destinations
 		return c.ListEndpointsForService(svc), nil
 	}
 

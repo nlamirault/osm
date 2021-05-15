@@ -12,6 +12,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	testclient "k8s.io/client-go/kubernetes/fake"
 
+	configFake "github.com/openservicemesh/osm/pkg/gen/client/config/clientset/versioned/fake"
+
 	"github.com/openservicemesh/osm/pkg/catalog"
 	"github.com/openservicemesh/osm/pkg/certificate"
 	"github.com/openservicemesh/osm/pkg/configurator"
@@ -51,12 +53,13 @@ func getProxy(kubeClient kubernetes.Interface) (*envoy.Proxy, error) {
 	return proxy, nil
 }
 
-func TestListenerConfiguration(t *testing.T) {
+func TestNewResponse(t *testing.T) {
 	assert := tassert.New(t)
 	mockCtrl := gomock.NewController(t)
 	mockConfigurator := configurator.NewMockConfigurator(mockCtrl)
 	kubeClient := testclient.NewSimpleClientset()
-	meshCatalog := catalog.NewFakeMeshCatalog(kubeClient)
+	configClient := configFake.NewSimpleClientset()
+	meshCatalog := catalog.NewFakeMeshCatalog(kubeClient, configClient)
 
 	proxy, err := getProxy(kubeClient)
 	assert.Empty(err)
@@ -82,7 +85,7 @@ func TestListenerConfiguration(t *testing.T) {
 	assert.True(ok)
 	assert.Equal(listener.Name, outboundListenerName)
 	assert.Equal(listener.TrafficDirection, xds_core.TrafficDirection_OUTBOUND)
-	assert.Len(listener.ListenerFilters, 1)
+	assert.Len(listener.ListenerFilters, 3) // Test has egress policy feature enabled, so 3 filters are expected: OriginalDst, TlsInspector, HttpInspector
 	assert.Equal(listener.ListenerFilters[0].Name, wellknown.OriginalDestination)
 	assert.NotNil(listener.FilterChains)
 	// There are 3 filter chains configured on the outbound-listner based on the configuration:

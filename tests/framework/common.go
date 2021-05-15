@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -33,9 +32,9 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -46,6 +45,9 @@ import (
 	"sigs.k8s.io/kind/pkg/cluster"
 	"sigs.k8s.io/kind/pkg/cluster/nodeutils"
 
+	configClientset "github.com/openservicemesh/osm/pkg/gen/client/config/clientset/versioned"
+
+	"github.com/openservicemesh/osm/pkg/apis/config/v1alpha1"
 	"github.com/openservicemesh/osm/pkg/cli"
 	"github.com/openservicemesh/osm/pkg/constants"
 	"github.com/openservicemesh/osm/pkg/utils"
@@ -89,6 +91,8 @@ const (
 var (
 	// default name for the mesh
 	defaultOsmNamespace = "osm-system"
+	// default MeshConfig name
+	defaultMeshConfigName = "osm-mesh-config"
 	// default image tag
 	defaultImageTag = "latest"
 	// default cert manager
@@ -195,6 +199,7 @@ type OsmTestData struct {
 	InitialRestartValues map[string]int  // Captures properly if an OSM instance have restarted during a NoInstall test
 
 	OsmNamespace      string
+	OsmMeshConfigName string
 	OsmImageTag       string
 	EnableNsMetricTag bool
 
@@ -213,6 +218,7 @@ type OsmTestData struct {
 	Env             *cli.EnvSettings
 	RestConfig      *rest.Config
 	Client          *kubernetes.Clientset
+	ConfigClient    *configClientset.Clientset
 	SmiClients      *smiClients
 	ClusterProvider *cluster.Provider // provider, used when kindCluster is used
 
@@ -242,6 +248,7 @@ func registerFlags(td *OsmTestData) {
 
 	flag.StringVar(&td.OsmImageTag, "osmImageTag", utils.GetEnv("CTR_TAG", defaultImageTag), "OSM image tag")
 	flag.StringVar(&td.OsmNamespace, "OsmNamespace", utils.GetEnv("K8S_NAMESPACE", defaultOsmNamespace), "OSM Namespace")
+	flag.StringVar(&td.OsmMeshConfigName, "OsmMeshConfig", defaultMeshConfigName, "OSM MeshConfig name")
 
 	flag.BoolVar(&td.EnableNsMetricTag, "EnableMetricsTag", defaultEnableNsMetricTag, "Enable tagging Namespaces for metrics collection")
 	flag.BoolVar(&td.DeployOnOpenShift, "deployOnOpenShift", false, "Configure tests to run on OpenShift")
@@ -366,8 +373,15 @@ nodeRegistration:
 		return errors.Wrap(err, "failed to create Kubernetes client")
 	}
 
+	configClient, err := configClientset.NewForConfig(kubeConfig)
+	if err != nil {
+		return errors.Wrap(err, "failed to create v1alpha config client")
+	}
+
 	td.RestConfig = kubeConfig
 	td.Client = clientset
+	td.ConfigClient = configClient
+
 	td.Env = cli.New()
 
 	if err := td.InitSMIClients(); err != nil {
@@ -523,20 +537,21 @@ func (td *OsmTestData) InstallOSM(instOpts InstallOSMOpts) error {
 		// Store current restart values for CTL processes
 		td.InitialRestartValues = td.GetOsmCtlComponentRestarts()
 
+		meshConfig, _ := Td.GetMeshConfig(Td.OsmNamespace)
+
 		// This resets supported dynamic configs expected by the caller
-		err := td.UpdateOSMConfig("egress",
-			fmt.Sprintf("%t", instOpts.EgressEnabled))
+		meshConfig.Spec.Traffic.EnableEgress = instOpts.EgressEnabled
+		meshConfig, err := Td.UpdateOSMConfig(meshConfig)
 		if err != nil {
 			return err
 		}
-		err = td.UpdateOSMConfig("permissive_traffic_policy_mode",
-			fmt.Sprintf("%t", instOpts.EnablePermissiveMode))
+		meshConfig.Spec.Traffic.EnablePermissiveTrafficPolicyMode = instOpts.EnablePermissiveMode
+		meshConfig, err = Td.UpdateOSMConfig(meshConfig)
 		if err != nil {
 			return err
 		}
-		err = td.UpdateOSMConfig("enable_debug_server",
-			fmt.Sprintf("%t", instOpts.EnableDebugServer))
-		if err != nil {
+		meshConfig.Spec.Observability.EnableDebugServer = instOpts.EnableDebugServer
+		if _, err = Td.UpdateOSMConfig(meshConfig); err != nil {
 			return err
 		}
 		return nil
@@ -554,14 +569,22 @@ func (td *OsmTestData) InstallOSM(instOpts InstallOSMOpts) error {
 
 	var args []string
 	args = append(args, "install",
-		"--container-registry="+instOpts.ContainerRegistryLoc,
-		"--osm-image-tag="+instOpts.OsmImagetag,
 		"--osm-namespace="+instOpts.ControlPlaneNS,
-		"--certificate-manager="+instOpts.CertManager,
-		"--enable-egress="+strconv.FormatBool(instOpts.EgressEnabled),
-		"--enable-permissive-traffic-policy="+strconv.FormatBool(instOpts.EnablePermissiveMode),
-		"--enable-debug-server="+strconv.FormatBool(instOpts.EnableDebugServer),
-		"--envoy-log-level="+instOpts.EnvoyLogLevel,
+		fmt.Sprintf("--timeout=%v", 90*time.Second),
+	)
+
+	instOpts.SetOverrides = append(instOpts.SetOverrides,
+		fmt.Sprintf("OpenServiceMesh.image.registry=%s", instOpts.ContainerRegistryLoc),
+		fmt.Sprintf("OpenServiceMesh.image.tag=%s", instOpts.OsmImagetag),
+		fmt.Sprintf("OpenServiceMesh.certificateManager=%s", instOpts.CertManager),
+		fmt.Sprintf("OpenServiceMesh.enableEgress=%v", instOpts.EgressEnabled),
+		fmt.Sprintf("OpenServiceMesh.enablePermissiveTrafficPolicy=%v", instOpts.EnablePermissiveMode),
+		fmt.Sprintf("OpenServiceMesh.enableDebugServer=%v", instOpts.EnableDebugServer),
+		fmt.Sprintf("OpenServiceMesh.envoyLogLevel=%s", instOpts.EnvoyLogLevel),
+		fmt.Sprintf("OpenServiceMesh.deployGrafana=%v", instOpts.DeployGrafana),
+		fmt.Sprintf("OpenServiceMesh.deployPrometheus=%v", instOpts.DeployPrometheus),
+		fmt.Sprintf("OpenServiceMesh.deployJaeger=%v", instOpts.DeployJaeger),
+		fmt.Sprintf("OpenServiceMesh.enableFluentbit=%v", instOpts.DeployFluentbit),
 	)
 
 	switch instOpts.CertManager {
@@ -569,12 +592,11 @@ func (td *OsmTestData) InstallOSM(instOpts InstallOSMOpts) error {
 		if err := td.installVault(instOpts); err != nil {
 			return err
 		}
-		args = append(args,
-			"--vault-host="+instOpts.VaultHost,
-			"--vault-token="+instOpts.VaultToken,
-			"--vault-protocol="+instOpts.VaultProtocol,
-			"--vault-role="+instOpts.VaultRole,
-		)
+		instOpts.SetOverrides = append(instOpts.SetOverrides,
+			fmt.Sprintf("OpenServiceMesh.vault.host=%s", instOpts.VaultHost),
+			fmt.Sprintf("OpenServiceMesh.vault.role=%s", instOpts.VaultRole),
+			fmt.Sprintf("OpenServiceMesh.vault.protocol=%s", instOpts.VaultProtocol),
+			fmt.Sprintf("OpenServiceMesh.vault.token=%s", instOpts.VaultToken))
 		// Wait for the vault pod
 		if err := td.WaitForPodsRunningReady(instOpts.ControlPlaneNS, 60*time.Second, 1); err != nil {
 			return errors.Wrap(err, "failed waiting for vault pod to become ready")
@@ -583,27 +605,23 @@ func (td *OsmTestData) InstallOSM(instOpts InstallOSMOpts) error {
 		if err := td.installCertManager(instOpts); err != nil {
 			return err
 		}
-		args = append(args,
-			"--cert-manager-issuer-name="+instOpts.CertmanagerIssuerName,
-			"--cert-manager-issuer-kind="+instOpts.CertmanagerIssuerKind,
-			"--cert-manager-issuer-group="+instOpts.CertmanagerIssuerGroup,
-		)
+		instOpts.SetOverrides = append(instOpts.SetOverrides,
+			fmt.Sprintf("OpenServiceMesh.certmanager.issuerName=%s", instOpts.CertmanagerIssuerName),
+			fmt.Sprintf("OpenServiceMesh.certmanager.issuerKind=%s", instOpts.CertmanagerIssuerKind),
+			fmt.Sprintf("OpenServiceMesh.certmanager.issuerGroup=%s", instOpts.CertmanagerIssuerGroup))
 	}
 
 	if !(td.InstType == KindCluster) {
 		// Making sure the image is always pulled in registry-based testing
-		args = append(args, "--osm-image-pull-policy=Always")
+		instOpts.SetOverrides = append(instOpts.SetOverrides,
+			"OpenServiceMesh.image.pullPolicy=Always")
 	}
 
 	if len(instOpts.ContainerRegistrySecret) != 0 {
-		args = append(args, "--container-registry-secret="+registrySecretName)
+		instOpts.SetOverrides = append(instOpts.SetOverrides,
+			fmt.Sprintf("OpenServiceMesh.imagePullSecrets[0].name=%s", registrySecretName),
+		)
 	}
-
-	args = append(args, fmt.Sprintf("--deploy-prometheus=%v", instOpts.DeployPrometheus))
-	args = append(args, fmt.Sprintf("--deploy-grafana=%v", instOpts.DeployGrafana))
-	args = append(args, fmt.Sprintf("--deploy-jaeger=%v", instOpts.DeployJaeger))
-	args = append(args, fmt.Sprintf("--enable-fluentbit=%v", instOpts.DeployFluentbit))
-	args = append(args, fmt.Sprintf("--timeout=%v", 90*time.Second))
 
 	td.T.Logf("Setting log OSM's log level through overrides to %s", instOpts.OSMLogLevel)
 	instOpts.SetOverrides = append(instOpts.SetOverrides,
@@ -660,18 +678,20 @@ func (td *OsmTestData) RestartOSMController(instOpts InstallOSMOpts) error {
 	return nil
 }
 
-// GetConfigMap is a wrapper to get a config map by name in a particular namespace
-func (td *OsmTestData) GetConfigMap(name, namespace string) (*corev1.ConfigMap, error) {
-	configmap, err := td.Client.CoreV1().ConfigMaps(namespace).Get(context.Background(), name, metav1.GetOptions{})
+// GetMeshConfig is a wrapper to get a MeshConfig by name in a particular namespace
+func (td *OsmTestData) GetMeshConfig(namespace string) (*v1alpha1.MeshConfig, error) {
+	meshConfig, err := td.ConfigClient.ConfigV1alpha1().MeshConfigs(namespace).Get(context.TODO(), td.OsmMeshConfigName, v1.GetOptions{})
+
 	if err != nil {
 		return nil, err
 	}
-	return configmap, nil
+	return meshConfig, nil
 }
 
 // LoadOSMImagesIntoKind loads the OSM images to the node for Kind clusters
 func (td *OsmTestData) LoadOSMImagesIntoKind() error {
 	imageNames := []string{
+		"init-osm-controller",
 		"osm-controller",
 		"osm-injector",
 		"init",
@@ -984,11 +1004,15 @@ func (td *OsmTestData) AddNsToMesh(shouldInjectSidecar bool, ns ...string) error
 	return nil
 }
 
-// UpdateOSMConfig updates OSM configmap
-func (td *OsmTestData) UpdateOSMConfig(key, value string) error {
-	patch := []byte(fmt.Sprintf(`{"data": {%q: %q}}`, key, value))
-	_, err := td.Client.CoreV1().ConfigMaps(td.OsmNamespace).Patch(context.TODO(), "osm-config", types.StrategicMergePatchType, patch, metav1.PatchOptions{})
-	return err
+// UpdateOSMConfig updates OSM MeshConfig
+func (td *OsmTestData) UpdateOSMConfig(meshConfig *v1alpha1.MeshConfig) (*v1alpha1.MeshConfig, error) {
+	updated, err := td.ConfigClient.ConfigV1alpha1().MeshConfigs(td.OsmNamespace).Update(context.TODO(), meshConfig, metav1.UpdateOptions{})
+
+	if err != nil {
+		td.T.Logf("UpdateOSMConfig(): %s", err)
+		return nil, fmt.Errorf("UpdateOSMConfig(): %s", err)
+	}
+	return updated, nil
 }
 
 // CreateMultipleNs simple CreateNs for multiple NS creation

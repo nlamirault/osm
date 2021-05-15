@@ -9,6 +9,7 @@ import (
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/wrappers"
+	"github.com/pkg/errors"
 
 	"github.com/openservicemesh/osm/pkg/catalog"
 	"github.com/openservicemesh/osm/pkg/configurator"
@@ -16,6 +17,7 @@ import (
 	"github.com/openservicemesh/osm/pkg/envoy"
 	"github.com/openservicemesh/osm/pkg/identity"
 	"github.com/openservicemesh/osm/pkg/service"
+	"github.com/openservicemesh/osm/pkg/trafficpolicy"
 )
 
 const (
@@ -58,32 +60,6 @@ func getUpstreamServiceCluster(downstreamIdentity identity.ServiceIdentity, upst
 	}
 
 	return remoteCluster, nil
-}
-
-// getOutboundPassthroughCluster returns an Envoy cluster that is used for outbound passthrough traffic
-func getOutboundPassthroughCluster() *xds_cluster.Cluster {
-	return &xds_cluster.Cluster{
-		Name:           envoy.OutboundPassthroughCluster,
-		ConnectTimeout: ptypes.DurationProto(clusterConnectTimeout),
-		ClusterDiscoveryType: &xds_cluster.Cluster_Type{
-			Type: xds_cluster.Cluster_ORIGINAL_DST,
-		},
-		LbPolicy:             xds_cluster.Cluster_CLUSTER_PROVIDED,
-		ProtocolSelection:    xds_cluster.Cluster_USE_DOWNSTREAM_PROTOCOL,
-		Http2ProtocolOptions: &xds_core.Http2ProtocolOptions{},
-	}
-}
-
-// getSyntheticCluster returns a static cluster with no endpoints
-func getSyntheticCluster(name string) *xds_cluster.Cluster {
-	return &xds_cluster.Cluster{
-		Name: name,
-		ClusterDiscoveryType: &xds_cluster.Cluster_Type{
-			Type: xds_cluster.Cluster_STATIC,
-		},
-		LbPolicy:       xds_cluster.Cluster_ROUND_ROBIN,
-		ConnectTimeout: ptypes.DurationProto(clusterConnectTimeout),
-	}
 }
 
 // getLocalServiceCluster returns an Envoy Cluster corresponding to the local service
@@ -166,5 +142,93 @@ func getPrometheusCluster() *xds_cluster.Cluster {
 				},
 			},
 		},
+	}
+}
+
+// getEgressClusters returns a slice of XDS cluster objects for the given egress cluster configs.
+// If the cluster config is invalid, an error is logged and the corresponding cluster config is ignored.
+func getEgressClusters(clusterConfigs []*trafficpolicy.EgressClusterConfig) []*xds_cluster.Cluster {
+	if clusterConfigs == nil {
+		return nil
+	}
+
+	var egressClusters []*xds_cluster.Cluster
+	for _, config := range clusterConfigs {
+		switch config.Host {
+		case "":
+			// Cluster config does not have a Host specified, route it to its original destination.
+			// Used for TCP based clusters
+			egressClusters = append(egressClusters, getOriginalDestinationEgressCluster(config.Name))
+
+		default:
+			// Cluster config has a Host specified, route it based on the Host resolved using DNS.
+			// Used for HTTP based clusters
+			if cluster, err := getDNSResolvableEgressCluster(config); err != nil {
+				log.Error().Err(err).Msg("Error building cluster for the given egress cluster config")
+			} else {
+				egressClusters = append(egressClusters, cluster)
+			}
+		}
+	}
+
+	return egressClusters
+}
+
+// getDNSResolvableEgressCluster returns an XDS cluster object that is resolved using DNS for the given egress cluster config.
+// If the egress cluster config is invalid, an error is returned.
+func getDNSResolvableEgressCluster(config *trafficpolicy.EgressClusterConfig) (*xds_cluster.Cluster, error) {
+	if config == nil {
+		return nil, errors.New("Invalid egress cluster config: nil type")
+	}
+	if config.Name == "" {
+		return nil, errors.New("Invalid egress cluster config: Name unspecified")
+	}
+	if config.Host == "" {
+		return nil, errors.New("Invalid egress cluster config: Host unspecified")
+	}
+	if config.Port == 0 {
+		return nil, errors.New("Invalid egress cluster config: Port unspecified")
+	}
+
+	return &xds_cluster.Cluster{
+		Name:           config.Name,
+		AltStatName:    config.Name,
+		ConnectTimeout: ptypes.DurationProto(clusterConnectTimeout),
+		ClusterDiscoveryType: &xds_cluster.Cluster_Type{
+			Type: xds_cluster.Cluster_STRICT_DNS,
+		},
+		LbPolicy: xds_cluster.Cluster_ROUND_ROBIN,
+		LoadAssignment: &xds_endpoint.ClusterLoadAssignment{
+			ClusterName: config.Name,
+			Endpoints: []*xds_endpoint.LocalityLbEndpoints{
+				{
+					LbEndpoints: []*xds_endpoint.LbEndpoint{{
+						HostIdentifier: &xds_endpoint.LbEndpoint_Endpoint{
+							Endpoint: &xds_endpoint.Endpoint{
+								Address: envoy.GetAddress(config.Host, uint32(config.Port)),
+							},
+						},
+						LoadBalancingWeight: &wrappers.UInt32Value{
+							Value: constants.ClusterWeightAcceptAll,
+						},
+					}},
+				},
+			},
+		},
+	}, nil
+}
+
+// getOriginalDestinationEgressCluster returns an Envoy cluster that routes traffic to its original destination.
+// The original destination is the original IP address and port prior to being redirected to the sidecar proxy.
+func getOriginalDestinationEgressCluster(name string) *xds_cluster.Cluster {
+	return &xds_cluster.Cluster{
+		Name:           name,
+		ConnectTimeout: ptypes.DurationProto(clusterConnectTimeout),
+		ClusterDiscoveryType: &xds_cluster.Cluster_Type{
+			Type: xds_cluster.Cluster_ORIGINAL_DST,
+		},
+		LbPolicy:             xds_cluster.Cluster_CLUSTER_PROVIDED,
+		ProtocolSelection:    xds_cluster.Cluster_USE_DOWNSTREAM_PROTOCOL,
+		Http2ProtocolOptions: &xds_core.Http2ProtocolOptions{},
 	}
 }

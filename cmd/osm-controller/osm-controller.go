@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/pflag"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
+	extensionsClientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -34,6 +35,7 @@ import (
 	"github.com/openservicemesh/osm/pkg/envoy/ads"
 	"github.com/openservicemesh/osm/pkg/envoy/registry"
 	"github.com/openservicemesh/osm/pkg/featureflags"
+	"github.com/openservicemesh/osm/pkg/gen/client/config/clientset/versioned"
 	"github.com/openservicemesh/osm/pkg/health"
 	"github.com/openservicemesh/osm/pkg/httpserver"
 	"github.com/openservicemesh/osm/pkg/ingress"
@@ -41,6 +43,7 @@ import (
 	"github.com/openservicemesh/osm/pkg/kubernetes/events"
 	"github.com/openservicemesh/osm/pkg/logger"
 	"github.com/openservicemesh/osm/pkg/metricsstore"
+	"github.com/openservicemesh/osm/pkg/policy"
 	"github.com/openservicemesh/osm/pkg/signals"
 	"github.com/openservicemesh/osm/pkg/smi"
 	"github.com/openservicemesh/osm/pkg/version"
@@ -57,7 +60,7 @@ var (
 	osmNamespace       string
 	webhookConfigName  string
 	caBundleSecretName string
-	osmConfigMapName   string
+	osmMeshConfigName  string
 
 	certProviderKind string
 
@@ -83,7 +86,7 @@ func init() {
 	flags.StringVar(&kubeConfigFile, "kubeconfig", "", "Path to Kubernetes config file.")
 	flags.StringVar(&osmNamespace, "osm-namespace", "", "Namespace to which OSM belongs to.")
 	flags.StringVar(&webhookConfigName, "webhook-config-name", "", "Name of the MutatingWebhookConfiguration to be configured by osm-controller")
-	flags.StringVar(&osmConfigMapName, "osm-configmap-name", "osm-config", "Name of the OSM ConfigMap")
+	flags.StringVar(&osmMeshConfigName, "osm-config-name", "osm-mesh-config", "Name of the OSM MeshConfig")
 
 	// Generic certificate manager/provider options
 	flags.StringVar(&certProviderKind, "certificate-manager", providers.TresorKind.String(), fmt.Sprintf("Certificate manager, one of [%v]", providers.ValidCertificateProviders))
@@ -102,7 +105,8 @@ func init() {
 	flags.StringVar(&certManagerOptions.IssuerGroup, "cert-manager-issuer-group", "cert-manager.io", "cert-manager issuer group")
 
 	// feature flags
-	flags.BoolVar(&optionalFeatures.WASMStats, "stats-wasm-experimental", false, "Enable a WebAssembly module that generates additional Envoy statistics.")
+	flags.BoolVar(&optionalFeatures.WASMStats, "stats-wasm-experimental", false, "Enable a WebAssembly module that generates additional Envoy statistics")
+	flags.BoolVar(&optionalFeatures.EgressPolicy, "enable-egress-policy", false, "Enable OSM's Egress policy API")
 
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = admissionv1.AddToScheme(scheme)
@@ -156,14 +160,14 @@ func main() {
 	// Start the default metrics store
 	startMetricsStore()
 
-	// This component will be watching the OSM ConfigMap and will make it
+	// This component will be watching the OSM MeshConfig and will make it available
 	// to the rest of the components.
-	cfg := configurator.NewConfigurator(kubernetes.NewForConfigOrDie(kubeConfig), stop, osmNamespace, osmConfigMapName)
-	configMap, err := cfg.GetConfigMap()
+	cfg := configurator.NewConfigurator(versioned.NewForConfigOrDie(kubeConfig), stop, osmNamespace, osmMeshConfigName)
+	meshConfig, err := cfg.GetMeshConfigJSON()
 	if err != nil {
-		log.Error().Err(err).Msgf("Error parsing ConfigMap %s", osmConfigMapName)
+		log.Error().Err(err).Msgf("Error parsing MeshConfig %s", osmMeshConfigName)
 	}
-	log.Info().Msgf("Initial ConfigMap %s: %s", osmConfigMapName, string(configMap))
+	log.Info().Msgf("Initial MeshConfig %s: %v", osmMeshConfigName, meshConfig)
 
 	kubernetesClient, err := k8s.NewKubernetesController(kubeClient, meshName, stop)
 	if err != nil {
@@ -195,23 +199,24 @@ func main() {
 		events.GenericEventRecorder().FatalEvent(err, events.InitializationError, "Error creating Ingress monitor client")
 	}
 
+	policyController, err := policy.NewPolicyController(kubeConfig, kubernetesClient, stop)
+	if err != nil {
+		events.GenericEventRecorder().FatalEvent(err, events.InitializationError, "Error creating controller for policy.openservicemesh.io")
+	}
+
 	meshCatalog := catalog.NewMeshCatalog(
 		kubernetesClient,
 		kubeClient,
 		meshSpec,
 		certManager,
 		ingressClient,
+		policyController,
 		stop,
 		cfg,
 		endpointsProviders...)
 
 	proxyRegistry := registry.NewProxyRegistry()
 	proxyRegistry.ReleaseCertificateHandler(certManager)
-
-	// Create the configMap validating webhook
-	if err := configurator.NewValidatingWebhook(kubeClient, certManager, osmNamespace, webhookConfigName, stop); err != nil {
-		events.GenericEventRecorder().FatalEvent(err, events.InitializationError, "Error creating osm-config validating webhook")
-	}
 
 	adsCert, err := certManager.IssueCertificate(xdsServerCertificateCommonName, constants.XDSCertificateValidityPeriod)
 	if err != nil {
@@ -226,9 +231,10 @@ func main() {
 
 	// Initialize OSM's http service server
 	httpServer := httpserver.NewHTTPServer(constants.OSMHTTPServerPort)
+	clientset := extensionsClientset.NewForConfigOrDie(kubeConfig)
 
 	// Health/Liveness probes
-	funcProbes := []health.Probes{xdsServer}
+	funcProbes := []health.Probes{xdsServer, smi.HealthChecker{SMIClientset: clientset}}
 	httpServer.AddHandlers(map[string]http.Handler{
 		"/health/ready": health.ReadinessHandler(funcProbes, getHTTPHealthProbes()),
 		"/health/alive": health.LivenessHandler(funcProbes, getHTTPHealthProbes()),

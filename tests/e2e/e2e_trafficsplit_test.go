@@ -12,21 +12,22 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/openservicemesh/osm/pkg/constants"
 	. "github.com/openservicemesh/osm/tests/framework"
 )
 
 var _ = OSMDescribe("Test HTTP from N Clients deployments to 1 Server deployment backed with Traffic split test",
 	OSMDescribeInfo{
 		Tier:   1,
-		Bucket: 1,
+		Bucket: 10,
 	},
 	func() {
 		Context("HTTP traffic splitting with SMI", func() {
-			testTrafficSplit(AppProtocolHTTP)
+			testTrafficSplit(constants.ProtocolHTTP)
 		})
 
 		Context("TCP traffic splitting with SMI", func() {
-			testTrafficSplit(AppProtocolTCP)
+			testTrafficSplit(constants.ProtocolTCP)
 		})
 	})
 
@@ -152,7 +153,7 @@ func testTrafficSplit(appProtocol string) {
 			for _, dstServer := range serverServices {
 				switch appProtocol {
 				// HTTP traffic
-				case AppProtocolHTTP:
+				case constants.ProtocolHTTP:
 					httpRG, trafficTarget := Td.CreateSimpleAllowPolicy(
 						SimpleAllowPolicy{
 							RouteGroupName:    fmt.Sprintf("%s-%s", srcClient, dstServer),
@@ -171,7 +172,7 @@ func testTrafficSplit(appProtocol string) {
 					Expect(err).NotTo(HaveOccurred())
 
 				// TCP traffic
-				case AppProtocolTCP:
+				case constants.ProtocolTCP:
 					tcpRoute, trafficTarget := Td.CreateSimpleTCPAllowPolicy(
 						SimpleAllowPolicy{
 							RouteGroupName:    fmt.Sprintf("%s-%s", srcClient, dstServer),

@@ -52,8 +52,14 @@ const (
 	// DefaultTracingPort is the tracing listener port.
 	DefaultTracingPort = uint32(9411)
 
-	// DefaultEnvoyLogLevel is the default envoy log level if not defined in the osm configmap
+	// DefaultEnvoyLogLevel is the default envoy log level if not defined in the osm MeshConfig
 	DefaultEnvoyLogLevel = "error"
+
+	// DefaultEnvoyImage is the default envoy proxy sidecar image if not defined in the osm MeshConfig
+	DefaultEnvoyImage = "envoyproxy/envoy-alpine:v1.18.3"
+
+	// DefaultInitContainerImage is the default init container image if not defined in the osm MeshConfig
+	DefaultInitContainerImage = "openservicemesh/init:v0.8.3"
 
 	// EnvoyPrometheusInboundListenerPort is Envoy's inbound listener port number for prometheus
 	EnvoyPrometheusInboundListenerPort = 15010
@@ -141,6 +147,9 @@ const (
 
 	// OSMConfigMap is the name of the OSM ConfigMap
 	OSMConfigMap = "osm-config"
+
+	// OSMMeshConfig is the name of the OSM MeshConfig
+	OSMMeshConfig = "osm-mesh-config"
 )
 
 // Annotations used by the controller
@@ -175,4 +184,24 @@ const (
 // OSM HTTP Server Paths
 const (
 	HTTPServerSmiVersionPath = "/smi/version"
+)
+
+// Application protocols
+const (
+	// HTTP protocol
+	ProtocolHTTP = "http"
+
+	// HTTPS protocol
+	ProtocolHTTPS = "https"
+
+	// TCP protocol
+	ProtocolTCP = "tcp"
+
+	// gRPC protocol
+	ProtocolGRPC = "grpc"
+
+	// ProtocolTCPServerFirst implies TCP based server first protocols
+	// Ex. MySQL, SMTP, PostgreSQL etc. where the server initiates the first
+	// byte in a TCP connection.
+	ProtocolTCPServerFirst = "tcp-server-first"
 )

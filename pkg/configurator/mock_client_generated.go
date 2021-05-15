@@ -9,6 +9,7 @@ import (
 	time "time"
 
 	gomock "github.com/golang/mock/gomock"
+	v1 "k8s.io/api/core/v1"
 )
 
 // MockConfigurator is a mock of Configurator interface
@@ -34,21 +35,6 @@ func (m *MockConfigurator) EXPECT() *MockConfiguratorMockRecorder {
 	return m.recorder
 }
 
-// GetConfigMap mocks base method
-func (m *MockConfigurator) GetConfigMap() ([]byte, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetConfigMap")
-	ret0, _ := ret[0].([]byte)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetConfigMap indicates an expected call of GetConfigMap
-func (mr *MockConfiguratorMockRecorder) GetConfigMap() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetConfigMap", reflect.TypeOf((*MockConfigurator)(nil).GetConfigMap))
-}
-
 // GetConfigResyncInterval mocks base method
 func (m *MockConfigurator) GetConfigResyncInterval() time.Duration {
 	m.ctrl.T.Helper()
@@ -61,6 +47,20 @@ func (m *MockConfigurator) GetConfigResyncInterval() time.Duration {
 func (mr *MockConfiguratorMockRecorder) GetConfigResyncInterval() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetConfigResyncInterval", reflect.TypeOf((*MockConfigurator)(nil).GetConfigResyncInterval))
+}
+
+// GetEnvoyImage mocks base method
+func (m *MockConfigurator) GetEnvoyImage() string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetEnvoyImage")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// GetEnvoyImage indicates an expected call of GetEnvoyImage
+func (mr *MockConfiguratorMockRecorder) GetEnvoyImage() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEnvoyImage", reflect.TypeOf((*MockConfigurator)(nil).GetEnvoyImage))
 }
 
 // GetEnvoyLogLevel mocks base method
@@ -77,6 +77,20 @@ func (mr *MockConfiguratorMockRecorder) GetEnvoyLogLevel() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEnvoyLogLevel", reflect.TypeOf((*MockConfigurator)(nil).GetEnvoyLogLevel))
 }
 
+// GetInitContainerImage mocks base method
+func (m *MockConfigurator) GetInitContainerImage() string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetInitContainerImage")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// GetInitContainerImage indicates an expected call of GetInitContainerImage
+func (mr *MockConfiguratorMockRecorder) GetInitContainerImage() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetInitContainerImage", reflect.TypeOf((*MockConfigurator)(nil).GetInitContainerImage))
+}
+
 // GetMaxDataPlaneConnections mocks base method
 func (m *MockConfigurator) GetMaxDataPlaneConnections() int {
 	m.ctrl.T.Helper()
@@ -89,6 +103,21 @@ func (m *MockConfigurator) GetMaxDataPlaneConnections() int {
 func (mr *MockConfiguratorMockRecorder) GetMaxDataPlaneConnections() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMaxDataPlaneConnections", reflect.TypeOf((*MockConfigurator)(nil).GetMaxDataPlaneConnections))
+}
+
+// GetMeshConfigJSON mocks base method
+func (m *MockConfigurator) GetMeshConfigJSON() ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetMeshConfigJSON")
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetMeshConfigJSON indicates an expected call of GetMeshConfigJSON
+func (mr *MockConfiguratorMockRecorder) GetMeshConfigJSON() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMeshConfigJSON", reflect.TypeOf((*MockConfigurator)(nil).GetMeshConfigJSON))
 }
 
 // GetOSMNamespace mocks base method
@@ -117,6 +146,34 @@ func (m *MockConfigurator) GetOutboundIPRangeExclusionList() []string {
 func (mr *MockConfiguratorMockRecorder) GetOutboundIPRangeExclusionList() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetOutboundIPRangeExclusionList", reflect.TypeOf((*MockConfigurator)(nil).GetOutboundIPRangeExclusionList))
+}
+
+// GetOutboundPortExclusionList mocks base method
+func (m *MockConfigurator) GetOutboundPortExclusionList() []int {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetOutboundPortExclusionList")
+	ret0, _ := ret[0].([]int)
+	return ret0
+}
+
+// GetOutboundPortExclusionList indicates an expected call of GetOutboundPortExclusionList
+func (mr *MockConfiguratorMockRecorder) GetOutboundPortExclusionList() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetOutboundPortExclusionList", reflect.TypeOf((*MockConfigurator)(nil).GetOutboundPortExclusionList))
+}
+
+// GetProxyResources mocks base method
+func (m *MockConfigurator) GetProxyResources() v1.ResourceRequirements {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetProxyResources")
+	ret0, _ := ret[0].(v1.ResourceRequirements)
+	return ret0
+}
+
+// GetProxyResources indicates an expected call of GetProxyResources
+func (mr *MockConfiguratorMockRecorder) GetProxyResources() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetProxyResources", reflect.TypeOf((*MockConfigurator)(nil).GetProxyResources))
 }
 
 // GetServiceCertValidityPeriod mocks base method

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -36,7 +37,7 @@ var (
 	ValidEnvoyLogLevels = []string{"trace", "debug", "info", "warning", "warn", "error", "critical", "off"}
 
 	// defaultFields are the default fields in osm-config
-	defaultFields = []string{"egress", "enable_debug_server", "permissive_traffic_policy_mode", "prometheus_scraping", "use_https_ingress", "envoy_log_level", "service_cert_validity_duration", "tracing_enable", "enable_privileged_init_container", "max_data_plane_connections"}
+	defaultFields = []string{"egress", "enable_debug_server", "permissive_traffic_policy_mode", "prometheus_scraping", "use_https_ingress", "envoy_log_level", "envoy_image", "service_cert_validity_duration", "tracing_enable", "enable_privileged_init_container", "max_data_plane_connections"}
 )
 
 const (
@@ -55,6 +56,9 @@ const (
 	// mustBeValidLogLvl is the reason for denial for envoy_log_level field
 	mustBeValidLogLvl = ": invalid log level"
 
+	// mustBeValidLogLvl is the reason for denial for envoy_image field
+	mustBeValidEnvoyImage = ": must be of the form envoyproxy/envoy-alpine:v<major>.<minor>.<patch>"
+
 	// mustBeValidTime is the reason for denial for incorrect syntax for service_cert_validity_duration field
 	mustBeValidTime = ": invalid time format must be a sequence of decimal numbers each with optional fraction and a unit suffix"
 
@@ -68,6 +72,8 @@ const (
 	mustBeInPortRange = ": must be between 0 and 65535"
 
 	mustBeValidIPRange = ": must be a list of valid IP addresses of the form a.b.c.d/x"
+
+	mustBeValidPort = ": must be a positive integer"
 
 	// cannotChangeMetadata is the reason for denial for changes to configmap metadata
 	cannotChangeMetadata = ": cannot change metadata"
@@ -252,10 +258,13 @@ func (whc *webhookConfig) validateFields(configMap corev1.ConfigMap, resp *admis
 		if !checkBoolFields(field, value, boolFields) {
 			reasonForDenial(resp, mustBeBool, field)
 		}
-		if field == envoyLogLevel && !checkEnvoyLogLevels(field, value) {
+		if field == envoyLogLevelKey && !checkEnvoyLogLevels(field, value) {
 			reasonForDenial(resp, mustBeValidLogLvl, field)
 		}
-		if field == serviceCertValidityDurationKey || field == configResyncInterval {
+		if field == envoyImageKey && !checkEnvoyImage(field, value) {
+			reasonForDenial(resp, mustBeValidEnvoyImage, field)
+		}
+		if field == serviceCertValidityDurationKey || field == configResyncIntervalKey {
 			_, err := time.ParseDuration(value)
 			if err != nil {
 				reasonForDenial(resp, mustBeValidTime, field)
@@ -272,6 +281,9 @@ func (whc *webhookConfig) validateFields(configMap corev1.ConfigMap, resp *admis
 		}
 		if field == outboundIPRangeExclusionListKey && !checkOutboundIPRangeExclusionList(value) {
 			reasonForDenial(resp, mustBeValidIPRange, field)
+		}
+		if field == outboundPortExclusionListKey && !checkOutboundPortExclusionList(value) {
+			reasonForDenial(resp, mustBeValidPort, field)
 		}
 		if field == maxDataPlaneConnectionsKey {
 			maxNum, err := strconv.Atoi(value)
@@ -307,11 +319,29 @@ func checkEnvoyLogLevels(configMapField, configMapValue string) bool {
 	return valid
 }
 
+// checkEnvoyImage checks that the name of the envoy proxy sidecar image is valid
+func checkEnvoyImage(configMapField, configMapValue string) bool {
+	match, _ := regexp.Match("envoyproxy\\/envoy-alpine:v\\d+\\.\\d+\\.\\d+$", []byte(configMapValue))
+	return match
+}
+
 func checkOutboundIPRangeExclusionList(ipRangesStr string) bool {
 	exclusionList := strings.Split(ipRangesStr, ",")
 	for i := range exclusionList {
 		ipAddress := strings.TrimSpace(exclusionList[i])
 		if _, _, err := net.ParseCIDR(ipAddress); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func checkOutboundPortExclusionList(portsStr string) bool {
+	portsExclusionList := strings.Split(portsStr, ",")
+	for i := range portsExclusionList {
+		port := strings.TrimSpace(portsExclusionList[i])
+		intVal, err := strconv.Atoi(port)
+		if err != nil || intVal <= 0 {
 			return false
 		}
 	}

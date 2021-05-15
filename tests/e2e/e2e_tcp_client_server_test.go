@@ -11,13 +11,14 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/openservicemesh/osm/pkg/constants"
 	. "github.com/openservicemesh/osm/tests/framework"
 )
 
 var _ = OSMDescribe("Test TCP traffic from 1 pod client -> 1 pod server",
 	OSMDescribeInfo{
 		Tier:   1,
-		Bucket: 2,
+		Bucket: 8,
 	},
 	func() {
 		Context("SimpleClientServer TCP with SMI policies", func() {
@@ -60,7 +61,7 @@ func testTCPTraffic(permissiveMode bool) {
 				Command:     []string{"/tcp-echo-server"},
 				Args:        []string{"--port", fmt.Sprintf("%d", destinationPort)},
 				Ports:       []int{destinationPort},
-				AppProtocol: AppProtocolTCP,
+				AppProtocol: constants.ProtocolTCP,
 			})
 
 		_, err := Td.CreateServiceAccount(destName, &svcAccDef)
